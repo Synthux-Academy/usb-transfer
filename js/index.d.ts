@@ -25,7 +25,11 @@ export interface HelloInfo {
   protoMinor: number;
   /** Shown in the connection steps when present */
   firmware?: string;
-  [field: string]: unknown;
+}
+
+/** What `handshake` needs of a Link class: `open(port, device)`. A subclass may ignore `device`. */
+export interface LinkClass {
+  open(port: SerialPortLike, device: Device<any>): Promise<Link<any>>;
 }
 
 export interface DeviceSpec<I extends HelloInfo = HelloInfo> {
@@ -59,7 +63,7 @@ export interface DeviceSpec<I extends HelloInfo = HelloInfo> {
   /** Console prefix. Default: the name in lower case. */
   logTag?: string;
   /** The Link subclass `handshake` opens. Default `Link`. */
-  Link?: typeof Link;
+  Link?: LinkClass;
   /** SysEx signature, default [0x7D, magic[0], magic[1]]. */
   sysexSignature?: readonly number[];
 }
@@ -109,7 +113,8 @@ export interface TransferOptions {
 
 export declare class Link<I extends HelloInfo = HelloInfo> {
   constructor(port: SerialPortLike, device: Device<I>);
-  static open<T extends Link<any>>(this: new (port: SerialPortLike, device: Device<any>) => T, port: SerialPortLike, device: Device<any>): Promise<T>;
+  /** Opens the port (retrying while the device enumerates) and returns a link of the class it's called on. */
+  static open(port: SerialPortLike, device: Device<any>): Promise<Link<any>>;
   readonly port: SerialPortLike;
   readonly device: Device<I>;
   /** Called once when the connection is lost; not on `close()` / `exit()`. */
