@@ -27,9 +27,14 @@ export interface HelloInfo {
   firmware?: string;
 }
 
-/** What `handshake` needs of a Link class: `open(port, device)`. A subclass may ignore `device`. */
+/** `fresh`: the port just appeared after the switch; on Linux, open waits about 6 s for ModemManager instead of 2 s. */
+export interface OpenOptions {
+  fresh?: boolean;
+}
+
+/** What `handshake` needs of a Link class: `open(port, device, options)`. A subclass may ignore `device`. */
 export interface LinkClass {
-  open(port: SerialPortLike, device: Device<any>): Promise<Link<any>>;
+  open(port: SerialPortLike, device: Device<any>, options?: OpenOptions): Promise<Link<any>>;
 }
 
 export interface DeviceSpec<I extends HelloInfo = HelloInfo> {
@@ -114,7 +119,7 @@ export interface TransferOptions {
 export declare class Link<I extends HelloInfo = HelloInfo> {
   constructor(port: SerialPortLike, device: Device<I>);
   /** Opens the port (retrying while the device enumerates) and returns a link of the class it's called on. */
-  static open(port: SerialPortLike, device: Device<any>): Promise<Link<any>>;
+  static open(port: SerialPortLike, device: Device<any>, options?: OpenOptions): Promise<Link<any>>;
   readonly port: SerialPortLike;
   readonly device: Device<I>;
   /** Called once when the connection is lost; not on `close()` / `exit()`. */
@@ -155,7 +160,7 @@ export declare function isSupported(): boolean;
 export declare function grantedPorts(device: Device<any>): Promise<SerialPortLike[]>;
 export declare function grantedPort(device: Device<any>): Promise<SerialPortLike | null>;
 export declare function enterTransferMode(device: Device<any>, options?: ConnectOptions): Promise<void>;
-export declare function handshake<L extends Link<any> = Link>(device: Device<any>, port: SerialPortLike, options?: ConnectOptions): Promise<Connection<L>>;
+export declare function handshake<L extends Link<any> = Link>(device: Device<any>, port: SerialPortLike, options?: ConnectOptions & OpenOptions): Promise<Connection<L>>;
 /** Throws `NeedsAuthorizationError` on first use once the click expired; then call `authorizePort()` from a click. */
 export declare function connect<L extends Link<any> = Link>(device: Device<any>, options?: ConnectOptions): Promise<Connection<L>>;
 export declare function authorizePort<L extends Link<any> = Link>(device: Device<any>, options?: ConnectOptions): Promise<Connection<L>>;
