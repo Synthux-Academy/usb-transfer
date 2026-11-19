@@ -192,6 +192,9 @@ Spotykach wraps this in UPLOAD_BEGIN (size, whole-file CRC), UPLOAD_DATA and UPL
   - Windows may cache the driver per VID/PID and mis-bind it when the same ID goes from MIDI to
     CDC. Mitigations: a different `bcdDevice` or serial string per mode, or a free PID from
     pid.codes.
-  - Linux: Web Serial needs the user in `dialout` (`uucp` on Arch). ModemManager may probe the new
-    `ttyACM`; framing resync handles it.
+  - Linux: Web Serial needs the user in `dialout` (`uucp` on Arch): `sudo usermod -aG dialout
+    $USER`, then log out and back in, or restart. ModemManager probes the new `ttyACM`, because
+    the Daisy CDC descriptor declares AT commands, and holds the port for a few seconds: the host
+    retries opening a port that just appeared for about 6 s on Linux (2 s elsewhere). Framing
+    resync handles the probe's bytes.
   - DAWs may need a rescan after the MIDI device comes back.
