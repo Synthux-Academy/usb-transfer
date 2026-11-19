@@ -1,0 +1,26 @@
+{
+  "name": "@synthuxacademy/usb-transfer",
+  "version": "1.0.0",
+  "description": "Host side of the Synthux USB transfer protocol: Web MIDI switch to transfer mode, CRC-framed requests over Web Serial with loss recovery",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "files": ["index.js", "index.d.ts", "README.md", "LICENSE"],
+  "sideEffects": false,
+  "keywords": ["synthux", "synthuxacademy", "daisy", "web-serial", "web-midi", "usb"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Synthux-Academy/usb-transfer.git",
+    "directory": "js"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
