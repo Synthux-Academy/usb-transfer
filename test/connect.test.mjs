@@ -2,7 +2,7 @@
 // the serial port. Run through run.sh.
 import { test, mock, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { defineDevice, enterTransferMode, connect, crc32, MidiPortNotFoundError } from "../js/index.js";
+import { defineDevice, enterTransferMode, connect, crc32, Link, MidiPortNotFoundError } from "../js/index.js";
 
 const TESTBOX = defineDevice({ name: "Testbox", magic: "TB", protoMajor: 1, connectHint: "Is it plugged in?" });
 const REPLY_OK = [0xF0, 0x7D, 0x54, 0x42, 0x02, 0, 0xF7];
@@ -198,4 +198,35 @@ test("connect takes the port that appears after the switch, not another device's
   assert.deepEqual(info, { protoMajor: 1, protoMinor: 0 });
   assert.ok(steps.some(line => /no answer on the granted port: Can't open the Testbox serial port/.test(line)), steps.join("\n"));
   assert.equal(steps.at(-1), "HELLO: protocol 1.0");
+});
+
+// Opens a port that stays busy for `busyMs`, with mocked timers; resolves to the Link or the error.
+async function openBusy(busyMs, options) {
+  let elapsed = 0;
+  const port = { ...helloPort(), async open() { if (elapsed < busyMs) throw new Error("busy"); } };
+  let result = null;
+  const done = Link.open(port, TESTBOX, options).then(link => (result = link), e => (result = e));
+  while (!result) {
+    await flush();
+    mock.timers.tick(250);
+    elapsed += 250;
+  }
+  await done;
+  return result;
+}
+
+test("on Linux a port that just appeared gets about 6 s to open, past a ModemManager probe", async () => {
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true, value: { platform: "Linux x86_64", userAgent: "Mozilla/5.0 (X11; Linux x86_64)" },
+  });
+  const fresh = await openBusy(4000, { fresh: true });
+  assert.ok(fresh instanceof Link, String(fresh));
+  await fresh.close();
+  // A port that was already granted keeps 2 s, so a busy one doesn't hold up the switch
+  const granted = await openBusy(4000);
+  assert.match(granted.message, /Can't open the Testbox serial port.*'dialout'/);
+  // Elsewhere, 2 s either way
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh)" } });
+  const mac = await openBusy(4000, { fresh: true });
+  assert.match(mac.message, /^Can't open the Testbox serial port\. Is another tab or app using it\?$/);
 });

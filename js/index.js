@@ -192,6 +192,8 @@ const UPLOAD_DATA_TIMEOUT_MS = 4000; // well below the device's 10 s idle timeou
 const DEVICE_QUIET_MS = 250;         // the device drops a broken frame's rest until 100 ms of quiet
 
 const KEEP_ALIVE_MS = 2000;
+const OPEN_ATTEMPTS = 8;               // 250 ms apart: about 2 s
+const OPEN_ATTEMPTS_LINUX_FRESH = 24;  // about 6 s, past a ModemManager probe
 
 function loadReadChunk(key, maxChunk) {
   try {
@@ -260,17 +262,22 @@ export class Link {
     };
   }
 
-  /** Opens the port, retrying while the device is still enumerating. Doesn't talk to it yet. */
-  static async open(port, device) {
+  /**
+   * Opens the port, retrying while the device is still enumerating. Doesn't talk to it yet.
+   * `fresh`: the port just appeared after the switch. On Linux, ModemManager probes a new
+   * `ttyACM` for a few seconds and holds it meanwhile, so that gets about 6 s instead of 2 s.
+   */
+  static async open(port, device, { fresh = false } = {}) {
     const link = new this(port, device);
-    for (let attempt = 0; ; attempt++) {
+    const attempts = fresh && isLinux() ? OPEN_ATTEMPTS_LINUX_FRESH : OPEN_ATTEMPTS;
+    for (let attempt = 1; ; attempt++) {
       try {
         await port.open({ baudRate: 115200, bufferSize: 65536 });
         break;
       } catch (e) {
-        if (attempt >= 7) {
+        if (attempt >= attempts) {
           throw new Error(`Can't open the ${link.device.name} serial port. Is another tab or app using it?`
-            + (isLinux() ? " On Linux, add your user to the 'dialout' group (or 'uucp' on Arch) and log in again." : ""),
+            + (isLinux() ? " On Linux, add your user to the 'dialout' group (or 'uucp' on Arch), then log out and back in, or restart." : ""),
           { cause: e });
         }
         await sleep(250);
@@ -720,10 +727,13 @@ export async function enterTransferMode(device, { onStep = () => {} } = {}) {
   if (status !== 0) throw new Error(device.enterText[status] || `${name} refused transfer mode (${status}).`);
 }
 
-/** Opens the port and checks HELLO. Resolves to `{ link, info }`, with the keep-alive running. */
-export async function handshake(device, port, { onStep = () => {} } = {}) {
+/**
+ * Opens the port and checks HELLO. Resolves to `{ link, info }`, with the keep-alive running.
+ * `fresh`: the port just appeared after the switch (see `Link.open`).
+ */
+export async function handshake(device, port, { onStep = () => {}, fresh = false } = {}) {
   onStep("opening the serial port and sending HELLO");
-  const link = await device.Link.open(port, device);
+  const link = await device.Link.open(port, device, { fresh });
   try {
     const info = await link.hello();
     onStep(`HELLO: ${info.firmware ? `firmware ${info.firmware}, ` : ""}protocol ${info.protoMajor}.${info.protoMinor}`);
@@ -775,7 +785,7 @@ export async function connect(device, { onStep = () => {} } = {}) {
 
   onStep("waiting for the serial port");
   const port = await waitForNewPort(device, existing, 2500);
-  if (port) return handshake(device, port, { onStep });
+  if (port) return handshake(device, port, { onStep, fresh: true });
   // The click that started this still counts as a user gesture for about 5 s
   if (navigator.userActivation?.isActive) return authorizePort(device, { onStep });
   throw new NeedsAuthorizationError(device.name);
@@ -785,5 +795,5 @@ export async function connect(device, { onStep = () => {} } = {}) {
 export async function authorizePort(device, { onStep = () => {} } = {}) {
   onStep("showing the port picker");
   const port = await navigator.serial.requestPort({ filters: [{ usbVendorId: device.usbVendorId, usbProductId: device.usbProductId }] });
-  return handshake(device, port, { onStep });
+  return handshake(device, port, { onStep, fresh: true });
 }
