@@ -754,9 +754,42 @@ export async function handshake(device, port, { onStep = () => {}, fresh = false
  * a reload), otherwise switches the device and waits for its serial port.
  * On first use, once the click that started this has expired, throws
  * `NeedsAuthorizationError`: call `authorizePort()` from a fresh click.
- * `onStep` gets a line for each step, for diagnostics.
+ * `onStep` gets a line for each step, for diagnostics, including the serial port's plug and
+ * unplug events while it runs (see `withSerialEvents`).
  */
-export async function connect(device, { onStep = () => {} } = {}) {
+export function connect(device, { onStep = () => {} } = {}) {
+  return withSerialEvents(onStep, () => connectSteps(device, onStep));
+}
+
+/** Shows the browser's port picker, so it must run from a click. The device waits up to 60 s for it. */
+export function authorizePort(device, { onStep = () => {} } = {}) {
+  return withSerialEvents(onStep, () => authorizeSteps(device, onStep));
+}
+
+/**
+ * Runs `work` with the serial port's plug and unplug events as `onStep` lines, e.g.
+ * `serial connect 0483:5740`. They show when the device switched and whether its port came
+ * and went, which the other steps can't see. Every port's events, with its USB IDs: another
+ * device's port appearing is worth knowing too.
+ */
+async function withSerialEvents(onStep, work) {
+  const serial = globalThis.navigator?.serial;
+  const hex = n => (typeof n === "number" ? n.toString(16).padStart(4, "0") : "?");
+  const onEvent = e => {
+    const info = e.target?.getInfo?.() ?? {};
+    onStep(`serial ${e.type} ${hex(info.usbVendorId)}:${hex(info.usbProductId)}`);
+  };
+  serial?.addEventListener?.("connect", onEvent);
+  serial?.addEventListener?.("disconnect", onEvent);
+  try {
+    return await work();
+  } finally {
+    serial?.removeEventListener?.("connect", onEvent);
+    serial?.removeEventListener?.("disconnect", onEvent);
+  }
+}
+
+async function connectSteps(device, onStep) {
   if (!isSupported()) {
     throw new Error("USB transfer needs Web Serial and Web MIDI. Please use a Chromium-based browser (Chrome, Edge, Opera) on macOS, Windows or Linux.");
   }
@@ -778,7 +811,7 @@ export async function connect(device, { onStep = () => {} } = {}) {
   } catch (e) {
     // Maybe already in transfer mode with a port this browser hasn't been granted yet
     if (e instanceof MidiPortNotFoundError && navigator.userActivation?.isActive) {
-      try { return await authorizePort(device, { onStep }); } catch (_) { throw e; }
+      try { return await authorizeSteps(device, onStep); } catch (_) { throw e; }
     }
     throw e;
   }
@@ -787,12 +820,11 @@ export async function connect(device, { onStep = () => {} } = {}) {
   const port = await waitForNewPort(device, existing, 2500);
   if (port) return handshake(device, port, { onStep, fresh: true });
   // The click that started this still counts as a user gesture for about 5 s
-  if (navigator.userActivation?.isActive) return authorizePort(device, { onStep });
+  if (navigator.userActivation?.isActive) return authorizeSteps(device, onStep);
   throw new NeedsAuthorizationError(device.name);
 }
 
-/** Shows the browser's port picker, so it must run from a click. The device waits up to 60 s for it. */
-export async function authorizePort(device, { onStep = () => {} } = {}) {
+async function authorizeSteps(device, onStep) {
   onStep("showing the port picker");
   const port = await navigator.serial.requestPort({ filters: [{ usbVendorId: device.usbVendorId, usbProductId: device.usbProductId }] });
   return handshake(device, port, { onStep, fresh: true });

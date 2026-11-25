@@ -2,7 +2,7 @@
 // the serial port. Run through run.sh.
 import { test, mock, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { defineDevice, enterTransferMode, connect, crc32, Link, MidiPortNotFoundError } from "../js/index.js";
+import { defineDevice, enterTransferMode, connect, authorizePort, crc32, Link, MidiPortNotFoundError } from "../js/index.js";
 
 const TESTBOX = defineDevice({ name: "Testbox", magic: "TB", protoMajor: 1, connectHint: "Is it plugged in?" });
 const REPLY_OK = [0xF0, 0x7D, 0x54, 0x42, 0x02, 0, 0xF7];
@@ -229,4 +229,29 @@ test("on Linux a port that just appeared gets about 6 s to open, past a ModemMan
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh)" } });
   const mac = await openBusy(4000, { fresh: true });
   assert.match(mac.message, /^Can't open the Testbox serial port\. Is another tab or app using it\?$/);
+});
+
+test("the serial port's plug and unplug events are steps while connecting, and only then", async () => {
+  const listeners = { connect: new Set(), disconnect: new Set() };
+  const fire = (type, target) => listeners[type].forEach(listener => listener({ type, target }));
+  const ours = helloPort();
+  const other = { getInfo: () => ({ usbVendorId: 0x2e8a, usbProductId: 0x000a }) };
+  const serial = {
+    addEventListener: (type, listener) => listeners[type].add(listener),
+    removeEventListener: (type, listener) => listeners[type].delete(listener),
+    async requestPort() {
+      fire("disconnect", other);
+      fire("connect", ours);
+      return ours;
+    },
+  };
+  fakeNavigator({ serial });
+  const steps = [];
+  const { link } = await authorizePort(TESTBOX, { onStep: line => steps.push(line) });
+  assert.deepEqual(steps.slice(0, 3), ["showing the port picker", "serial disconnect 2e8a:000a", "serial connect 0483:5740"]);
+  // Link keeps its own disconnect listener while open; ours are gone
+  await link.close();
+  assert.deepEqual([listeners.connect.size, listeners.disconnect.size], [0, 0]);
+  fire("connect", ours);
+  assert.equal(steps.filter(line => line.startsWith("serial connect")).length, 1);
 });

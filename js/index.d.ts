@@ -151,7 +151,7 @@ export interface Connection<L extends Link<any> = Link> {
   info: NonNullable<L["info"]>;
 }
 
-/** `onStep` gets a line for each connection step, for diagnostics. */
+/** `onStep` gets a line for each connection step, for diagnostics. `connect` and `authorizePort` add the serial port's plug and unplug events, e.g. `serial connect 0483:5740`. */
 export interface ConnectOptions {
   onStep?: (line: string) => void;
 }
