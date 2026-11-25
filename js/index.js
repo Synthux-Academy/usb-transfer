@@ -194,6 +194,7 @@ const DEVICE_QUIET_MS = 250;         // the device drops a broken frame's rest u
 const KEEP_ALIVE_MS = 2000;
 const OPEN_ATTEMPTS = 8;               // 250 ms apart: about 2 s
 const OPEN_ATTEMPTS_LINUX_FRESH = 24;  // about 6 s, past a ModemManager probe
+const FIRST_HELLO_MS = 1000;           // a HELLO is answered in 40-200 ms
 
 function loadReadChunk(key, maxChunk) {
   try {
@@ -473,8 +474,8 @@ export class Link {
   // Commands /////////////////////////////////////////////////////////////////
 
   /** Device info (the device's `parseHello`). Also resets the device session, so it never runs inside another operation. */
-  async hello() {
-    const p = await this.exclusive(() => this.request(CMD.hello));
+  async hello(timeout) {
+    const p = await this.exclusive(() => this.request(CMD.hello, undefined, timeout));
     this.info = this.device.parseHello(p);
     return this.info;
   }
@@ -729,13 +730,25 @@ export async function enterTransferMode(device, { onStep = () => {} } = {}) {
 
 /**
  * Opens the port and checks HELLO. Resolves to `{ link, info }`, with the keep-alive running.
- * `fresh`: the port just appeared after the switch (see `Link.open`).
+ * `fresh`: the port just appeared after the switch (see `Link.open`). On macOS the first HELLO
+ * on such a port can go unanswered, not a byte back, while one after reopening the port gets
+ * through. So a fresh port's first HELLO gets 1 s, and if nothing at all came back, the port
+ * is reopened and HELLO sent again. HELLO resets the session, so a second one is safe.
  */
 export async function handshake(device, port, { onStep = () => {}, fresh = false } = {}) {
   onStep("opening the serial port and sending HELLO");
-  const link = await device.Link.open(port, device, { fresh });
+  let link = await device.Link.open(port, device, { fresh });
   try {
-    const info = await link.hello();
+    let info;
+    try {
+      info = await link.hello(fresh ? FIRST_HELLO_MS : undefined);
+    } catch (e) {
+      if (!fresh || !(e instanceof TimeoutError) || link._rx.length) throw e;
+      onStep(`no answer to the first HELLO (${e.detail}), reopening the port`);
+      await link.close();
+      link = await device.Link.open(port, device, { fresh });
+      info = await link.hello();
+    }
     onStep(`HELLO: ${info.firmware ? `firmware ${info.firmware}, ` : ""}protocol ${info.protoMajor}.${info.protoMinor}`);
     if (info.protoMajor !== device.protoMajor) {
       await link.exit();
