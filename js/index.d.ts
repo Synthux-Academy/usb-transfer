@@ -135,7 +135,8 @@ export declare class Link<I extends HelloInfo = HelloInfo> {
   startKeepAlive(): void;
   stopKeepAlive(): void;
 
-  hello(): Promise<I>;
+  /** Device info; resets the device session. `timeout` in ms, default 5000. */
+  hello(timeout?: number): Promise<I>;
   /** One chunk of a chunked write: `payload` = offset u32 + `length` bytes. Retries lost and corrupted frames. */
   writeChunk(type: number, payload: Uint8Array, offset: number, length: number, timeout?: number): Promise<void>;
   /** `length` bytes from `start` through ranged reads, adapting the read size to lost replies. */

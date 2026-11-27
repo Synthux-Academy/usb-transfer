@@ -2,7 +2,7 @@
 // the serial port. Run through run.sh.
 import { test, mock, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { defineDevice, enterTransferMode, connect, crc32, Link, MidiPortNotFoundError } from "../js/index.js";
+import { defineDevice, enterTransferMode, connect, handshake, crc32, Link, MidiPortNotFoundError, TimeoutError } from "../js/index.js";
 
 const TESTBOX = defineDevice({ name: "Testbox", magic: "TB", protoMajor: 1, connectHint: "Is it plugged in?" });
 const REPLY_OK = [0xF0, 0x7D, 0x54, 0x42, 0x02, 0, 0xF7];
@@ -229,4 +229,73 @@ test("on Linux a port that just appeared gets about 6 s to open, past a ModemMan
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh)" } });
   const mac = await openBusy(4000, { fresh: true });
   assert.match(mac.message, /^Can't open the Testbox serial port\. Is another tab or app using it\?$/);
+});
+
+// A port that can be closed and reopened. `answer(request, opens)` returns the bytes to send
+// back, or null for none; `opens` counts the opens so far.
+function reopenablePort(answer) {
+  const port = {
+    opens: 0,
+    getInfo: () => ({ usbVendorId: 0x0483, usbProductId: 0x5740 }),
+    async open() { port.opens++; },
+    async close() {},
+  };
+  Object.defineProperty(port, "readable", { get() {
+    const queue = [];
+    let wake = null;
+    let cancelled = false;
+    port._push = bytes => { queue.push(bytes); wake?.(); };
+    return { getReader: () => ({
+      async read() {
+        while (!queue.length && !cancelled) await new Promise(resolve => { wake = resolve; });
+        return cancelled ? { value: undefined, done: true } : { value: queue.shift(), done: false };
+      },
+      async cancel() { cancelled = true; wake?.(); },
+      releaseLock() {},
+    }) };
+  } });
+  Object.defineProperty(port, "writable", { get() {
+    return { getWriter: () => ({
+      async write(request) { const bytes = answer(request, port.opens); if (bytes) port._push(bytes); },
+      releaseLock() {},
+    }) };
+  } });
+  return port;
+}
+
+function helloReply(request) {
+  const payload = new Uint8Array([0, 1, 0]);
+  const frame = new Uint8Array(12 + payload.length);
+  const dv = new DataView(frame.buffer);
+  frame.set([0x54, 0x42, request[2] | 0x80, request[3]]);
+  dv.setUint32(4, payload.length, true);
+  frame.set(payload, 12);
+  dv.setUint32(8, crc32(payload, crc32(frame.subarray(2, 8))), true);
+  return frame;
+}
+
+test("a fresh port whose first HELLO gets no answer at all is reopened, and the second HELLO connects", async () => {
+  mock.timers.reset(); // real timers: the first HELLO waits 1 s
+  fakeNavigator();
+  const port = reopenablePort((request, opens) => (opens === 1 ? null : helloReply(request)));
+  const steps = [];
+  const started = Date.now();
+  const { link, info } = await handshake(TESTBOX, port, { fresh: true, onStep: line => steps.push(line) });
+  await link.close();
+  assert.deepEqual(info, { protoMajor: 1, protoMinor: 0 });
+  assert.equal(port.opens, 2);
+  assert.ok(Date.now() - started < 2500, "the first HELLO gets about 1 s, not 5");
+  assert.deepEqual(steps, [
+    "opening the serial port and sending HELLO",
+    "no answer to the first HELLO (request 0x1 seq 1: 0 bytes pending), reopening the port",
+    "HELLO: protocol 1.0",
+  ]);
+});
+
+test("a first HELLO answered in part isn't retried: the device is talking, something else is wrong", async () => {
+  mock.timers.reset();
+  fakeNavigator();
+  const port = reopenablePort(request => helloReply(request).subarray(0, 5));
+  await assert.rejects(handshake(TESTBOX, port, { fresh: true }), e => e instanceof TimeoutError && /5 bytes pending/.test(e.detail));
+  assert.equal(port.opens, 1);
 });
